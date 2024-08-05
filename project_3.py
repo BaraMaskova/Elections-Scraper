@@ -4,53 +4,46 @@ author: Barbora Mašková
 email: baramaskova@seznam.cz
 discord: baramaskova
 """
+
 import sys
 import csv
 import requests
 from bs4 import BeautifulSoup
+from typing import List, Tuple
 
 
 def get_html(link: str) -> BeautifulSoup:
-    """Uložení HTML z adresy v argumentu. Vrací třídu BeautifulSoup."""
+    """Fetch HTML from a given URL and return a BeautifulSoup object."""
     response = requests.get(link)
-    html = BeautifulSoup(response.text, "html.parser")
-    print("STAHUJI DATA Z URL:", link)
-    return html
+    response.raise_for_status()  # Raise an HTTPError if the HTTP request returned an unsuccessful status code
+    print("Fetching data from URL:", link)
+    return BeautifulSoup(response.text, "html.parser")
 
 
-if len(sys.argv) != 3:
-    print('Zadal jsi nesprávný počet argumentů. Argumenty musí být 3. '
-          'Název souboru, url adresa v uvozovkách a libovolný název výstupního .csv.')
-    sys.exit()
-
-url, output_file = sys.argv[1], sys.argv[2]
-html = get_html(url)
-
-
-def get_towns(soup: BeautifulSoup) -> list[str]:
-    """Vrací seznam měst v daném okrese."""
+def get_towns(soup: BeautifulSoup) -> List[str]:
+    """Return a list of town names in a given district."""
     return [town.text for town in soup.find_all("td", "overflow_name")]
 
 
-def get_links(soup: BeautifulSoup) -> list[str]:
-    """Vrací URL adresu k získání detailů jednotlivých obcí požadovaného okresu."""
+def get_links(soup: BeautifulSoup) -> List[str]:
+    """Return a list of URLs to obtain details of each municipality in a given district."""
     return [f"https://volby.cz/pls/ps2017nss/{link.a['href']}" for link in soup.find_all("td", "cislo")]
 
 
-def get_ids(soup: BeautifulSoup) -> list[str]:
-    """Vrací identifikační čísla jednotlivých obcí."""
+def get_ids(soup: BeautifulSoup) -> List[str]:
+    """Return a list of IDs for each municipality."""
     return [i.text for i in soup.find_all("td", "cislo")]
 
 
-def collect_parties(soup: BeautifulSoup) -> list[str]:
-    """Vrací seznam kandidujících stran v daném okresu."""
+def collect_parties(soup: BeautifulSoup) -> List[str]:
+    """Return a list of political parties running in a given district."""
     first_town_link = get_links(soup)[0]
     first_town_html = get_html(first_town_link)
     return [party.text for party in first_town_html.find_all("td", "overflow_name")]
 
 
-def get_voter_stats(link: str) -> tuple[list[str], list[str], list[str]]:
-    """Vrací statistiky voličů pro daný link."""
+def get_voter_stats(link: str) -> Tuple[List[str], List[str], List[str]]:
+    """Return voter statistics for a given link."""
     html = get_html(link)
     voters = [v.text.replace('\xa0', ' ') for v in html.find_all("td", headers="sa2")]
     attendance = [a.text.replace('\xa0', ' ') for a in html.find_all("td", headers="sa3")]
@@ -58,9 +51,9 @@ def get_voter_stats(link: str) -> tuple[list[str], list[str], list[str]]:
     return voters, attendance, valid_votes
 
 
-def collect_votes(links: list[str]) -> list[list[str]]:
-    """Funkce vrací list listů, kde je chronologicky uveden procentuální
-    výsledek každé z politických stran v každé z obcí."""
+def collect_votes(links: List[str]) -> List[List[str]]:
+    """Return a list of lists where each sublist contains the vote percentages
+    for each political party in each municipality."""
     votes = []
     for link in links:
         html = get_html(link)
@@ -69,10 +62,10 @@ def collect_votes(links: list[str]) -> list[list[str]]:
     return votes
 
 
-def create_rows(soup: BeautifulSoup) -> list[list[str]]:
-    """Pomocná funkce pro tvorbu csv souboru vrací list listů, kdy v každém listu je chronologicky
-    uvedeno ID konkrétní obce, její název, registrovaní voliči, zúčastnění voliči, platné hlasy a
-    procentuální výsledky každé z kandidujících stran."""
+def create_rows(soup: BeautifulSoup) -> List[List[str]]:
+    """Return a list of lists where each sublist contains data for a single municipality,
+    including its municipality_id, name, registered voters, participating voters, valid votes, and
+    percentage results for each political party."""
     towns = get_towns(soup)
     ids = get_ids(soup)
     links = get_links(soup)
@@ -86,32 +79,40 @@ def create_rows(soup: BeautifulSoup) -> list[list[str]]:
 
     votes = collect_votes(links)
     rows = []
-    for id, town, voter, attend, valid, vote in zip(ids, towns, voters, attendance, valid_ones, votes):
-        rows.append([id, town, voter, attend, valid] + vote)
+    for municipality_id, town, voter, attend, valid, vote in zip(ids, towns, voters, attendance, valid_ones, votes):
+        rows.append([municipality_id, town, voter, attend, valid] + vote)
     return rows
 
 
-def election2017(url: str, output_file: str) -> None:
-    """Hlavní část funkce, která za pomoci výše uvedených funkcí vytváří csv soubor
-    s volebními výsledky."""
+def election2017(url: str, output_filename: str) -> None:
+    """Main function that generates a CSV file with election results using the above functions."""
     try:
-        header = ['Kód obce', 'Název obce', 'Voliči v seznamu', 'Vydané obálky', 'Platné hlasy']
-        rows = create_rows(html)
-        parties = collect_parties(html)
+        soup = get_html(url)  # Moved inside the function to avoid code outside of functions
+        header = ['Municipality Code', 'Municipality Name', 'Registered Voters', 'Issued Envelopes', 'Valid Votes']
+        rows = create_rows(soup)
+        parties = collect_parties(soup)
 
-        print("UKLÁDÁM DATA DO SOUBORU:", output_file)
+        print("Saving data to file:", output_filename)
 
         header.extend(parties)
-        with open(output_file, 'w', newline='') as f:
-            writer = csv.writer(f)
+        with open(output_filename, 'w', newline='') as file:
+            writer = csv.writer(file)
             writer.writerow(header)
             writer.writerows(rows)
 
-        print("UKONČUJI:", sys.argv[0])
+        print("Process completed successfully.")
+    except requests.exceptions.RequestException as e:
+        print(f"HTTP error occurred: {e}")
+        sys.exit(1)
     except Exception as e:
-        print(f"Nastala chyba: {e}")
+        print(f"An error occurred: {e}")
         sys.exit(1)
 
 
 if __name__ == '__main__':
-    election2017(url, output_file)
+    if len(sys.argv) != 3:
+        print('Incorrect number of arguments. Expected 3: script name, URL, and output CSV filename.')
+        sys.exit(1)
+
+    url_arg, output_file_arg = sys.argv[1], sys.argv[2]
+    election2017(url_arg, output_file_arg)
